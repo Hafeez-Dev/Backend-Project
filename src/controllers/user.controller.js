@@ -2,7 +2,7 @@ import { asynHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js"
 import { ApiResponse } from "../utils/ApiResponse.js"
 import { User } from "../models/user.model.js"
-import { uploadOnCloudinary } from "../utils/cloudinary.js"
+import { uploadOnCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js"
 import jwt from "jsonwebtoken"
 
 
@@ -69,8 +69,14 @@ const registerUser = asynHandler( async (req, res) => {
 
     const user = await User.create({
         fullName,
-        avatar: avatar.url,
-        coverImage: coverImage?.url || "",
+        avatar: {
+            url: avatar.url,
+            public_id: avatar.public_id
+        },
+        coverImage: {
+            url: coverImage?.url || "",
+            public_id: coverImage?.public_id || ""
+        },
         username,
         email,
         password
@@ -184,13 +190,13 @@ const refreshAccessToken = asynHandler( async (req, res) => {
 
         const decodedToken = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET)
 
-        const user = await User.findById(decodedToken._id)
+        const user = await User.findById(decodedToken?._id)
 
         if(incomingRefreshToken !== user?.refreshToken){
             throw new ApiError(401, "refresh token is expired or used!")
         }
         
-        const {newAccessToken: accessToken, newRefreshToken: refreshToken} = generateAccessAndRefreshTokens(user._id)
+        const {accessToken, refreshToken} = await generateAccessAndRefreshTokens(user._id)
 
         const options = {
             httpOnly: true,
@@ -199,21 +205,18 @@ const refreshAccessToken = asynHandler( async (req, res) => {
 
         return res
         .status(200)
-        .cookie("accessToken", newAccessToken, options)
-        .cookie("refreshToken", newRefreshToken, options)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
         .json(
             new ApiResponse(
                 200,
-                { newAccessToken, newRefreshToken},
+                { accessToken, refreshToken},
                 "Access token refreshed!"
             )
         )
 
-
-
-
     } catch (error) {
-        throw new ApiError(401, "Invalid refresh token")
+        throw new ApiError(401, error?.message || "Invalid refresh token")
     }
 })
 
@@ -283,10 +286,20 @@ const updateUserAvatar = asynHandler( async (req, res) => {
         throw new ApiError(500, "Error while uploading on cloudinary!")
     }
 
-    const user = await User.findByIdAndUpdate(
+    const user = await User.findById(req.user?._id).select("avatar")
+
+    //TODO: delete old image - assignment
+    await deleteFromCloudinary(user.avatar?.public_id)
+
+    const updatedUser = await User.findByIdAndUpdate(
         req.user?._id,
         {
-            avatar: avatar.url
+            $set:{
+                avatar: {
+                    url: avatar.url,
+                    public_id: avatar.public_id
+                }
+            }
         },
         {
             returnDocument: "after"
@@ -296,7 +309,7 @@ const updateUserAvatar = asynHandler( async (req, res) => {
     return res
     .status(200)
     .json(
-        new ApiResponse(200, user, "Avatar image updated successfully")
+        new ApiResponse(200, updatedUser, "Avatar image updated successfully")
     )
 
 })
@@ -314,10 +327,20 @@ const updateUserCoverImage = asynHandler( async (req, res) => {
         throw new ApiError(500, "Error while uploading on cloudinary!")
     }
 
-    const user = await User.findByIdAndUpdate(
+    const user = await User.findById(req.user?._id).select("coverImage")
+
+    //TODO: delete old image - assignment
+    await deleteFromCloudinary(user.coverImage?.public_id)
+
+    const updatedUser = await User.findByIdAndUpdate(
         req.user?._id,
         {
-            coverImage: coverImage.url
+            $set:{
+                coverImage: {
+                    url: coverImage.url,
+                    public_id: coverImage.public_id
+                }
+            }
         },
         {
             returnDocument: "after"
@@ -327,7 +350,7 @@ const updateUserCoverImage = asynHandler( async (req, res) => {
     return res
     .status(200)
     .json(
-        new ApiResponse(200, user, "coverImage image updated successfully")
+        new ApiResponse(200, updatedUser, "coverImage image updated successfully")
     )
 
 })
