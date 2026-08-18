@@ -10,6 +10,87 @@ import {deleteFromCloudinary, uploadOnCloudinary} from "../utils/cloudinary.js"
 const getAllVideos = asyncHandler(async (req, res) => {
     const { page = 1, limit = 10, query, sortBy, sortType, userId } = req.query
     //TODO: get all videos based on query, sort, pagination
+    const pipeline = []
+
+    if(query) {
+        pipeline.push(
+            {
+                $match: {
+                    $or: [
+                        {title: {$regex: query, $options: "i"}},
+                        {description: {$regex: query, $options: "i"}},
+                    ]
+                }
+            }
+        )
+    }
+
+    if(userId) {
+        if(!isValidObjectId(userId)) {
+            throw new ApiError(400, "Invalid userId")
+        }
+
+        pipeline.push({
+            $match: { 
+                owner: new mongoose.Types.ObjectId(userId)
+            }
+        })
+    }
+
+    //fetch only that are set isPublished as true
+    pipeline.push({ $match: { isPublished: true }})
+
+    //sortBy can be views, createdAt, duration
+    //sortType can be ascending(1) or decending(-1)
+    if (sortBy && sortType) {
+        pipeline.push({
+            $sort: {
+                [sortBy]: sortType === "asc" ? 1 : -1
+            }
+        })
+    } else {
+        pipeline.push({ $sort: { createdAt: -1 } })
+    }
+
+    pipeline.push(
+        {
+            $lookup: {
+                from: "users",
+                localField: "owner",
+                foreignField: "_id",
+                as: "ownerDetails",
+                pipeline: [
+                    {
+                        $project: {
+                            username: 1,
+                            "avatar.url": 1
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            $unwind: "$ownerDetails"
+        }
+    )
+
+    const videoAggregate = Video.aggregate(pipeline)
+
+    const options = {
+        limit: parseInt(limit, 10),
+        page: parseInt(page, 10)
+    }
+
+    const videos = await Video.aggregatePaginate(videoAggregate, options)
+
+    return res
+    .status(200)
+    .json(
+        new ApiResponse(
+            200, videos, "Videos fetched successfully!"
+        )
+    )
+
 })
 
 const publishAVideo = asyncHandler(async (req, res) => {
